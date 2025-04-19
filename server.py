@@ -1,27 +1,45 @@
 import asyncio
 import websockets
-import os
+import sounddevice as sd
+import numpy as np
 
-# Paramètres du serveur
-PORT = int(os.getenv("PORT", 5000))  # Variable d'environnement de Railway
+# Paramètres audio
+CHUNK = 1024
+FORMAT = np.int16
+CHANNELS = 1
+RATE = 44100
 
-async def handler(websocket, path):
-    print(f"[✅] Client connecté : {path}")
-    try:
+# Adresse du serveur WebSocket
+SERVER_URL = "ws://monserveur-production.up.railway.app"  # Lien fourni par Railway
+
+async def send_audio(websocket):
+    # Enregistrement de l'audio à partir du micro
+    def callback(indata, frames, time, status):
+        if status:
+            print(status)
+        websocket.send(indata.tobytes())
+
+    with sd.InputStream(callback=callback, channels=CHANNELS, samplerate=RATE, dtype=FORMAT):
+        await asyncio.Future()  # L'attente permet à l'audio de continuer à être enregistré
+
+async def receive_audio(websocket):
+    # Lecture audio sur le haut-parleur
+    def callback(outdata, frames, time, status):
+        if status:
+            print(status)
+        outdata[:] = np.frombuffer(data, dtype=FORMAT)
+
+    with sd.OutputStream(callback=callback, channels=CHANNELS, samplerate=RATE, dtype=FORMAT):
         while True:
-            data = await websocket.recv()  # Recevoir des données audio
-            if not data:
-                break
-            await websocket.send(data)  # Répondre avec les mêmes données (audio)
-    except:
-        print("[⚠️] Problème avec la connexion.")
+            data = await websocket.recv()
+            callback(data)
 
-# Lancer le serveur WebSocket
-start_server = websockets.serve(handler, "0.0.0.0", PORT)
+async def main():
+    async with websockets.connect(SERVER_URL) as websocket:
+        await asyncio.gather(
+            send_audio(websocket),
+            receive_audio(websocket)
+        )
 
-# Boucle d'événements
-asyncio.get_event_loop().run_until_complete(start_server)
-print(f"[🎙️] Serveur WebSocket démarré sur le port {PORT}.")
-
-# Lancer le serveur
-asyncio.get_event_loop().run_forever()
+# Exécuter l'application
+asyncio.run(main())
